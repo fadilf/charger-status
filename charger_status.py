@@ -73,7 +73,6 @@ st.markdown(
        Adjust the max-width breakpoint as needed for your device. */
     @media (max-width: 520px) {
         .cs-cards-row { grid-template-columns: 1fr !important; }
-        .cs-statusbar .divider { display: none; }
         .cs-statusbar { gap: 8px 18px; }
     }
 
@@ -109,6 +108,7 @@ st.markdown(
     /* Scoped to this button's key so it never leaks to other widgets. */
     .st-key-refresh_button button {
         background-color: #2563eb; border-color: #2563eb; color: #ffffff;
+        min-height: 3.5rem;
     }
     .st-key-refresh_button button:hover {
         background-color: #1d4ed8; border-color: #1d4ed8; color: #ffffff;
