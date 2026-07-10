@@ -88,7 +88,7 @@ st.markdown(
     }
     .cs-card-name {
         font-size: 16px; font-weight: 700; color: var(--text-color);
-        text-decoration: none; width: fit-content;
+        text-decoration: none; width: fit-content; align-self: flex-end;
     }
     .cs-card-name:hover { text-decoration: underline; }
     .cs-card-meta { font-size: 12px; color: var(--text-color); opacity: .6; }
