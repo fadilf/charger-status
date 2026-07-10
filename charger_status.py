@@ -33,32 +33,48 @@ st.set_page_config(page_title="GWP 8 Charger Status App", page_icon="🔌", layo
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 2rem; max-width: 900px; }
+    /* Streamlit's built-in toolbar (hamburger menu, Deploy button) is a
+       fixed strip pinned to the very top of the viewport. It sits above
+       our content and will clip anything placed too close to the top —
+       hiding it here and reclaiming the space keeps this app-bar-style
+       title from being cut off, and reads cleaner for a mobile-app feel.
+       Note: this also removes access to Streamlit's Settings/About menu. */
+    /*[data-testid="stHeader"] { display: none; } */
+
+    .block-container { padding-top: 2.5rem; max-width: 900px; }
+
+    .cs-appbar {
+        font-size: 19px; font-weight: 700; letter-spacing: -.01em;
+        color: var(--text-color); padding-bottom: 14px; margin-bottom: 18px;
+        border-bottom: 1px solid rgba(128,128,128,.15);
+    }
 
     .cs-statusbar {
-        display: flex; align-items: center; justify-content: space-between;
-        padding-top: 10px; margin-top: 10px;
-        border-top: 1px solid rgba(128,128,128,.25);
+        display: flex; flex-wrap: wrap; align-items: center;
+        gap: 10px 24px; margin-bottom: 20px;
     }
-    .cs-statusbar .seg { display: flex; flex-direction: column; gap: 2px; }
+    .cs-statusbar .seg { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
     .cs-statusbar .seg.grow { flex: 1; }
     .cs-statusbar .label {
         font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
         color: var(--text-color); opacity: .55; font-weight: 600;
     }
-    .cs-statusbar .value { font-size: 15px; font-weight: 700; color: var(--text-color); }
+    .cs-statusbar .value { font-size: 15px; font-weight: 700; color: var(--text-color); white-space: nowrap; }
+    .cs-statusbar .value .freshness { font-size: 13px; font-weight: 500; opacity: .6; }
     .cs-statusbar .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
     .cs-statusbar .divider { width: 1px; height: 30px; background: rgba(128,128,128,.3); margin: 0 20px; }
 
     .cs-cards-row {
         display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-        gap: 14px; align-items: start;
+        gap: 14px; align-items: start; margin-bottom: 20px;
     }
 
     /* Make cards stack earlier on narrower screens (phones/tablets).
        Adjust the max-width breakpoint as needed for your device. */
     @media (max-width: 520px) {
         .cs-cards-row { grid-template-columns: 1fr !important; }
+        .cs-statusbar .divider { display: none; }
+        .cs-statusbar { gap: 8px 18px; }
     }
 
     .cs-card {
@@ -83,22 +99,43 @@ st.markdown(
     }
     .cs-port .port-status { font-weight: 700; }
     .cs-port .port-sub { font-size: 11px; opacity: .75; color: var(--text-color); }
-    * {
-        margin-bottom: 0rem !important;
+
+    .cs-port.stale { animation: cs-pulse 1.1s ease-in-out infinite; }
+    @keyframes cs-pulse {
+        0%, 100% { opacity: .35; }
+        50% { opacity: .7; }
     }
-    .st-emotion-cache-4cktc5 p { margin: 0rem !important; }
-    .st-emotion-cache-1ubki1d {align-content: center !important; }
+
+    /* Scoped to this button's key so it never leaks to other widgets. */
+    .st-key-refresh_button button {
+        background-color: #2563eb; border-color: #2563eb; color: #ffffff;
+    }
+    .st-key-refresh_button button:hover {
+        background-color: #1d4ed8; border-color: #1d4ed8; color: #ffffff;
+    }
+    .st-key-refresh_button button:active {
+        background-color: #1e40af; border-color: #1e40af; color: #ffffff;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ---- Sidebar: charger list only ----
+# ---- Sidebar: charger list + auto-refresh settings ----
 st.sidebar.header("Chargers")
 names_input = st.sidebar.text_input(
     "Comma separated, left to right", "BH-71, BH-72, DO-075"
 )
 charger_names = [n.strip() for n in names_input.split(",") if n.strip()]
+
+st.sidebar.header("Auto-refresh")
+mode = st.sidebar.radio(
+    "Mode", ["On demand", "Auto"], index=0, horizontal=True,
+)
+interval = st.sidebar.number_input(
+    "Every (seconds)", min_value=1, value=5, step=1,
+    disabled=(mode == "On demand"),
+)
 
 
 def fetch_charger(name: str, timeout: float = 8.0) -> dict:
@@ -123,31 +160,13 @@ def status_meta(status: Optional[str]) -> Tuple[str, str]:
     return STATUS_META.get(status or "", (status or "Unknown", "#8a8378"))
 
 
-st.header("GWP 8 Chargers")
+st.markdown('<div class="cs-appbar">GWP 8 Chargers</div>', unsafe_allow_html=True)
+
+status_placeholder = st.empty()
 cards_placeholder = st.empty()
-control_container = st.container(border=True)
-with control_container:
-    c1, c2, c3, c4 = st.columns([2, 1, .75, .5],vertical_alignment="bottom")
-
-    with c1:
-        manual_refresh = st.button("Refresh", use_container_width=True)
-    status_placeholder = st.empty()
-
-    with c2:
-        mode = st.radio(
-            "Mode", ["On demand", "Auto"], index=0, horizontal=True,
-            label_visibility="collapsed", width="content"
-        )
-    with c3:
-        interval = st.number_input(
-            "Every (s)", min_value=1, value=5, step=1,
-            disabled=(mode == "On demand"), label_visibility="collapsed",
-        )
-    with c4:
-        st.write("seconds")
-
-
-
+manual_refresh = st.button(
+    "Refresh", help="Refresh now", use_container_width=True, type="primary", key="refresh_button", 
+)
 
 
 def build_status_html(chargers: Dict[str, dict], updated_at: Optional[datetime], fetching: bool) -> str:
@@ -157,50 +176,46 @@ def build_status_html(chargers: Dict[str, dict], updated_at: Optional[datetime],
     are in use vs total.
     """
     total_ports = sum(len(c.get("ports", [])) for c in chargers.values())
-    in_use = sum(
+    available = sum(
         1
         for c in chargers.values()
         for p in c.get("ports", [])
-        if p.get("status") == "SESSION"
+        if p.get("status") == "AVAILABLE"
     )
 
-    # Determine status label and color. When fetching, show an
-    # updating indicator; otherwise show how long ago the last
-    # successful update occurred (in minutes).
+    # Determine freshness color/label. When fetching, show an updating
+    # indicator; otherwise show how long ago the last successful update
+    # occurred, kept short so it reads naturally next to the clock time.
     if fetching:
         dot = "#c99a2e"
-        status_text = "Updating…"
+        freshness = "updating…"
     else:
         dot = "#4a9d6e"
         if updated_at:
             delta = datetime.now() - updated_at
             minutes = int(delta.total_seconds() // 60)
             if minutes < 1:
-                status_text = "less than 1 minute ago"
+                freshness = "just now"
             elif minutes == 1:
-                status_text = "1 minute ago"
+                freshness = "1 min ago"
             else:
-                status_text = f"{minutes} minutes ago"
+                freshness = f"{minutes} min ago"
         else:
-            status_text = "—"
+            freshness = None
 
-    updated_text = updated_at.strftime("%H:%M:%S %p") if updated_at else "—"
+    updated_text = updated_at.strftime("%I:%M:%S %p") if updated_at else "—"
+    freshness_html = f' <span class="freshness">· {freshness}</span>' if freshness else ""
 
     return f"""
     <div class="cs-statusbar">
         <div class="seg">
-            <span class="label">Ports in use</span>
-            <span class="value">{in_use} / {total_ports}</span>
-        </div>
- 
-        <div class="divider"></div>
-        <div class="seg">
-            <span class="label">Last updated</span>
-            <span class="value">{updated_text}</span>
+            <span class="label">Ports available</span>
+            <span class="value">{available} / {total_ports}</span>
         </div>
         <div class="divider"></div>
         <div class="seg grow">
-            <span class="value"><span class="dot" style="background:{dot};"></span>{status_text}</span>
+            <span class="label">Last updated</span>
+            <span class="value"><span class="dot" style="background:{dot};"></span>{updated_text}{freshness_html}</span>
         </div>
     </div>
     """
@@ -215,7 +230,7 @@ def esc(value) -> str:
     return html.escape(str(value)) if value is not None else ""
 
 
-def build_cards_html(chargers: Dict[str, dict], errors: Dict[str, str]) -> str:
+def build_cards_html(chargers: Dict[str, dict], errors: Dict[str, str], fetching: bool) -> str:
     cards = []
     for name in charger_names:
         c = chargers.get(name)
@@ -257,9 +272,10 @@ def build_cards_html(chargers: Dict[str, dict], errors: Dict[str, str]) -> str:
             connector = (p.get("connectorLocations") or [None])[0] or (
                 p.get("connectorTypes") or [""]
             )[0]
+            stale_class = " stale" if fetching else ""
             port_html.append(
                 f"""
-                <div class="cs-port" style="border:1px solid {color}55;background:{color}1a;">
+                <div class="cs-port{stale_class}" style="border:1px solid {color}55;background:{color}1a;">
                     <div class="port-status" style="color:{color};">● {esc(label)}</div>
                     <div class="port-sub">Port {esc(p.get('portId'))} ({esc(connector)})</div>
                 </div>
@@ -292,7 +308,7 @@ def compact(html_str: str) -> str:
 
 def render(chargers: dict, errors: dict, updated_at, fetching: bool):
     status_placeholder.markdown(compact(build_status_html(chargers, updated_at, fetching)), unsafe_allow_html=True)
-    cards_placeholder.markdown(compact(build_cards_html(chargers, errors)), unsafe_allow_html=True)
+    cards_placeholder.markdown(compact(build_cards_html(chargers, errors, fetching)), unsafe_allow_html=True)
 
 
 def poll():
