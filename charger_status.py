@@ -8,8 +8,9 @@ type hints, and compact helper comments for readability.
 import html
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Tuple, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 import streamlit as st
@@ -85,7 +86,11 @@ st.markdown(
         display: flex; flex-direction: column; gap: 2px;
         margin-bottom: 12px;
     }
-    .cs-card-name { font-size: 16px; font-weight: 700; color: var(--text-color); }
+    .cs-card-name {
+        font-size: 16px; font-weight: 700; color: var(--text-color);
+        text-decoration: none; width: fit-content;
+    }
+    .cs-card-name:hover { text-decoration: underline; }
     .cs-card-meta { font-size: 12px; color: var(--text-color); opacity: .6; }
     .cs-card-error-text { font-size: 13px; color: #d9605f; }
     .cs-card-empty { font-size: 13px; color: var(--text-color); opacity: .5; font-style: italic; }
@@ -160,6 +165,15 @@ def status_meta(status: Optional[str]) -> Tuple[str, str]:
     return STATUS_META.get(status or "", (status or "Unknown", "#8a8378"))
 
 
+def to_local(dt: datetime) -> datetime:
+    """Convert an aware UTC datetime to the viewer's browser timezone."""
+    tz_name = st.context.timezone
+    try:
+        return dt.astimezone(ZoneInfo(tz_name)) if tz_name else dt.astimezone()
+    except Exception:  # noqa: BLE001
+        return dt.astimezone()
+
+
 st.markdown('<div class="cs-appbar">GWP 8 Chargers</div>', unsafe_allow_html=True)
 
 status_placeholder = st.empty()
@@ -192,7 +206,7 @@ def build_status_html(chargers: Dict[str, dict], updated_at: Optional[datetime],
     else:
         dot = "#4a9d6e"
         if updated_at:
-            delta = datetime.now() - updated_at
+            delta = datetime.now(timezone.utc) - updated_at
             minutes = int(delta.total_seconds() // 60)
             if minutes < 1:
                 freshness = "just now"
@@ -203,7 +217,7 @@ def build_status_html(chargers: Dict[str, dict], updated_at: Optional[datetime],
         else:
             freshness = None
 
-    updated_text = updated_at.strftime("%I:%M:%S %p") if updated_at else "—"
+    updated_text = to_local(updated_at).strftime("%I:%M:%S %p") if updated_at else "—"
     freshness_html = f' <span class="freshness">· {freshness}</span>' if freshness else ""
 
     return f"""
@@ -236,13 +250,17 @@ def build_cards_html(chargers: Dict[str, dict], errors: Dict[str, str], fetching
         c = chargers.get(name)
         err = errors.get(name)
         safe_name = esc(name)
+        charger_link = (
+            f'<a class="cs-card-name" href="{esc(f"https://charge.id/{name.lower()}")}" '
+            f'target="_blank" rel="noopener noreferrer">{safe_name}</a>'
+        )
 
         if err:
             cards.append(
                 f"""
                 <div class="cs-card error">
                     <div class="cs-card-header">
-                        <span class="cs-card-name">{safe_name}</span>
+                        {charger_link}
                     </div>
                     <div class="cs-card-error-text">Error: {esc(err)}</div>
                 </div>
@@ -255,7 +273,7 @@ def build_cards_html(chargers: Dict[str, dict], errors: Dict[str, str], fetching
                 f"""
                 <div class="cs-card">
                     <div class="cs-card-header">
-                        <span class="cs-card-name">{safe_name}</span>
+                        {charger_link}
                     </div>
                     <div class="cs-card-empty">No data yet</div>
                 </div>
@@ -286,7 +304,7 @@ def build_cards_html(chargers: Dict[str, dict], errors: Dict[str, str], fetching
             f"""
             <div class="cs-card">
                 <div class="cs-card-header">
-                    <span class="cs-card-name">{safe_name}</span>
+                    {charger_link}
                     <span class="cs-card-meta">{meta}</span>
                 </div>
                 <div class="cs-ports">{''.join(port_html)}</div>
@@ -318,7 +336,7 @@ def poll():
             chargers[name] = fetch_charger(name)
         except Exception as e:  # noqa: BLE001
             errors[name] = str(e)
-    return chargers, errors, datetime.now()
+    return chargers, errors, datetime.now(timezone.utc)
 
 
 # ---- Persisted state so the UI never has to go blank, and on-demand mode
@@ -357,7 +375,7 @@ else:
         # the "minutes ago" status updates even when we are not fetching
         # fresh data. We do not re-fetch here; this is only to update UI.
         if st.session_state.updated_at:
-            elapsed = (datetime.now() - st.session_state.updated_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - st.session_state.updated_at).total_seconds()
             # Sleep until the next minute tick so the label increments near
             # a whole-minute boundary (but wait at least 1 second).
             wait = max(1, 60 - int(elapsed % 60))
