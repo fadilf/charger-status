@@ -1,14 +1,23 @@
+"""Charger status dashboard for GWP 8 chargers.
+
+Small Streamlit app that displays charger and port status by querying
+the ChargeLab API. This file was cleaned up with clearer docstrings,
+type hints, and compact helper comments for readability.
+"""
+
 import html
 import re
 import time
 from datetime import datetime
+from typing import Dict, Tuple, Optional
 
 import requests
 import streamlit as st
 
 API_BASE = "https://api-v1-blue.chargelab.io/core/v1/chargers"
 
-STATUS_META = {
+# Mapping of charger port status => (label, color)
+STATUS_META: Dict[str, Tuple[str, str]] = {
     "SESSION": ("In use", "#e0663f"),
     "AVAILABLE": ("Available", "#4a9d6e"),
     "UNAVAILABLE": ("Unavailable", "#8a8378"),
@@ -18,7 +27,7 @@ STATUS_META = {
     "FINISHING": ("Finishing", "#c99a2e"),
 }
 
-st.set_page_config(page_title="Charger Status", page_icon="🔌", layout="centered")
+st.set_page_config(page_title="GWP 8 Charger Status App", page_icon="🔌", layout="centered")
 
 # ---- One-time global styling ----
 st.markdown(
@@ -46,6 +55,12 @@ st.markdown(
         gap: 14px; align-items: start;
     }
 
+    /* Make cards stack earlier on narrower screens (phones/tablets).
+       Adjust the max-width breakpoint as needed for your device. */
+    @media (max-width: 520px) {
+        .cs-cards-row { grid-template-columns: 1fr !important; }
+    }
+
     .cs-card {
         border: 1px solid rgba(128,128,128,.3); border-radius: 10px;
         padding: 16px 18px; background: var(--secondary-background-color);
@@ -68,7 +83,7 @@ st.markdown(
     }
     .cs-port .port-status { font-weight: 700; }
     .cs-port .port-sub { font-size: 11px; opacity: .75; color: var(--text-color); }
-    .st-emotion-cache-4cktc5 {
+    * {
         margin-bottom: 0rem !important;
     }
     .st-emotion-cache-4cktc5 p { margin: 0rem !important; }
@@ -86,7 +101,13 @@ names_input = st.sidebar.text_input(
 charger_names = [n.strip() for n in names_input.split(",") if n.strip()]
 
 
-def fetch_charger(name: str, timeout: float = 8.0):
+def fetch_charger(name: str, timeout: float = 8.0) -> dict:
+    """Fetch a charger entity by name from the remote API.
+
+    Raises requests.RequestException or ValueError when the charger
+    cannot be found. The caller should handle exceptions and display
+    them to the user.
+    """
     url = f"{API_BASE}?filter_eq[name]={name}&role=DRIVER"
     resp = requests.get(url, timeout=timeout)
     resp.raise_for_status()
@@ -97,12 +118,13 @@ def fetch_charger(name: str, timeout: float = 8.0):
     return entities[0]
 
 
-def status_meta(status: str):
-    return STATUS_META.get(status, (status or "Unknown", "#8a8378"))
+def status_meta(status: Optional[str]) -> Tuple[str, str]:
+    """Return a human label and color for a given raw status key."""
+    return STATUS_META.get(status or "", (status or "Unknown", "#8a8378"))
 
 
-st.title("🔌 Charger Status")
-
+st.header("GWP 8 Chargers")
+cards_placeholder = st.empty()
 control_container = st.container(border=True)
 with control_container:
     c1, c2, c3, c4 = st.columns([2, 1, .75, .5],vertical_alignment="bottom")
@@ -122,20 +144,18 @@ with control_container:
             disabled=(mode == "On demand"), label_visibility="collapsed",
         )
     with c4:
-        st.html("""
-            <style>
-                [data-testid="stColumn"]:nth-of-type(1) [data-testid="stVerticalBlock"] {
-                    margin: 0px !important;
-                }
-            </style>
-        """)
         st.write("seconds")
 
 
-cards_placeholder = st.empty()
 
 
-def build_status_html(chargers: dict, updated_at, fetching: bool) -> str:
+
+def build_status_html(chargers: Dict[str, dict], updated_at: Optional[datetime], fetching: bool) -> str:
+    """Build the top status bar HTML fragment.
+
+    Shows whether the UI is currently fetching and how many ports
+    are in use vs total.
+    """
     total_ports = sum(len(c.get("ports", [])) for c in chargers.values())
     in_use = sum(
         1
@@ -144,37 +164,58 @@ def build_status_html(chargers: dict, updated_at, fetching: bool) -> str:
         if p.get("status") == "SESSION"
     )
 
+    # Determine status label and color. When fetching, show an
+    # updating indicator; otherwise show how long ago the last
+    # successful update occurred (in minutes).
     if fetching:
-        dot, text = "#c99a2e", "Updating…"
+        dot = "#c99a2e"
+        status_text = "Updating…"
     else:
-        dot, text = "#4a9d6e", "Up to date"
+        dot = "#4a9d6e"
+        if updated_at:
+            delta = datetime.now() - updated_at
+            minutes = int(delta.total_seconds() // 60)
+            if minutes < 1:
+                status_text = "less than 1 minute ago"
+            elif minutes == 1:
+                status_text = "1 minute ago"
+            else:
+                status_text = f"{minutes} minutes ago"
+        else:
+            status_text = "—"
 
-    updated_text = updated_at.strftime("%H:%M:%S") if updated_at else "—"
+    updated_text = updated_at.strftime("%H:%M:%S %p") if updated_at else "—"
 
     return f"""
     <div class="cs-statusbar">
-        <div class="seg grow">
-            <span class="value"><span class="dot" style="background:{dot};"></span>{text}</span>
+        <div class="seg">
+            <span class="label">Ports in use</span>
+            <span class="value">{in_use} / {total_ports}</span>
         </div>
+ 
         <div class="divider"></div>
         <div class="seg">
             <span class="label">Last updated</span>
             <span class="value">{updated_text}</span>
         </div>
         <div class="divider"></div>
-        <div class="seg">
-            <span class="label">Ports in use</span>
-            <span class="value">{in_use} / {total_ports}</span>
+        <div class="seg grow">
+            <span class="value"><span class="dot" style="background:{dot};"></span>{status_text}</span>
         </div>
     </div>
     """
 
 
 def esc(value) -> str:
+    """Safely escape a value for HTML output.
+
+    None becomes an empty string; everything else is stringified
+    and HTML-escaped.
+    """
     return html.escape(str(value)) if value is not None else ""
 
 
-def build_cards_html(chargers: dict, errors: dict) -> str:
+def build_cards_html(chargers: Dict[str, dict], errors: Dict[str, str]) -> str:
     cards = []
     for name in charger_names:
         c = chargers.get(name)
@@ -241,9 +282,11 @@ def build_cards_html(chargers: dict, errors: dict) -> str:
 
 
 def compact(html_str: str) -> str:
-    """Collapse an indented, multi-line HTML fragment into one whitespace-free
-    line. Streamlit's markdown renderer treats any line indented 4+ spaces as
-    a literal code block, so pretty-printed HTML must never reach it as-is."""
+    """Collapse multi-line HTML into a single line for Streamlit.
+
+    Streamlit will interpret indented lines as code blocks, so we minify
+    spacing between tags while preserving readability in source.
+    """
     return re.sub(r">\s+<", "><", html_str.strip())
 
 
@@ -290,5 +333,17 @@ else:
         render(chargers, errors, updated_at, fetching=False)
 
     if mode == "Auto":
+        # Auto mode: sleep the user-selected interval and then refetch/re-render.
         time.sleep(interval)
         st.rerun()
+    else:
+        # On-demand mode: still rerun periodically (once per minute) so
+        # the "minutes ago" status updates even when we are not fetching
+        # fresh data. We do not re-fetch here; this is only to update UI.
+        if st.session_state.updated_at:
+            elapsed = (datetime.now() - st.session_state.updated_at).total_seconds()
+            # Sleep until the next minute tick so the label increments near
+            # a whole-minute boundary (but wait at least 1 second).
+            wait = max(1, 60 - int(elapsed % 60))
+            time.sleep(wait)
+            st.rerun()
